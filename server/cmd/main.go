@@ -13,6 +13,11 @@ import (
 )
 
 func main() {
+	// Настраиваем логирование на stdout для лучшей видимости в Docker
+	log.SetOutput(os.Stdout)
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmsgprefix)
+	log.SetPrefix("[SERVER] ")
+
 	// Настройка конфигурации сервера
 	config := server.DefaultConfig()
 
@@ -55,25 +60,16 @@ func main() {
 
 	// Создаем и запускаем сервер
 	srv := server.NewServer(config)
+	if err := srv.Start(); err != nil {
+		log.Printf("Ошибка запуска сервера: %v", err)
+	}
 
 	// Обработка сигналов для корректного завершения
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// Запускаем сервер в отдельной горутине
-	go func() {
-		if err := srv.Start(); err != nil {
-			log.Fatalf("Ошибка запуска сервера: %v", err)
-		}
-	}()
+	sig := <-sigChan
+	log.Printf("Получен сигнал завершения (%v), начинаем корректное завершение...", sig)
 
-	// Ждем сигнала завершения
-	<-sigChan
-	log.Println("Получен сигнал завершения, останавливаем сервер...")
-
-	if err := srv.Stop(); err != nil {
-		log.Fatalf("Ошибка остановки сервера: %v", err)
-	}
-
-	log.Println("Сервер успешно остановлен")
+	srv.Stop()
 }

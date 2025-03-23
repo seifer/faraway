@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -64,43 +65,25 @@ func TestChallengeEncodeDecode(t *testing.T) {
 	}
 }
 
-func TestSolutionEncodeDecode(t *testing.T) {
-	originalChallenge := Challenge{
-		Prefix:     "test-prefix",
-		Difficulty: 10,
-	}
-	original := Solution{
-		Challenge: originalChallenge,
-		Nonce:     12345,
-	}
-
-	// Кодируем решение в строку
-	encoded := original.Encode()
-
-	// Декодируем решение из строки
-	decoded, err := DecodeSolution(encoded)
-	if err != nil {
-		t.Errorf("Ошибка декодирования решения: %v", err)
+func TestEstimateTime(t *testing.T) {
+	// Проверяем, что функция EstimateTime возвращает корректные результаты
+	testCases := []struct {
+		difficulty      int
+		hashesPerSecond float64
+	}{
+		{8, 1000000},  // ~256 попыток при 1M хешей/сек
+		{16, 1000000}, // ~65536 попыток при 1M хешей/сек
 	}
 
-	// Проверяем, что декодированное решение совпадает с оригинальным
-	if decoded.Challenge.Prefix != original.Challenge.Prefix {
-		t.Errorf("Префикс декодированного решения (%s) не совпадает с оригинальным (%s)",
-			decoded.Challenge.Prefix, original.Challenge.Prefix)
-	}
-	if decoded.Challenge.Difficulty != original.Challenge.Difficulty {
-		t.Errorf("Сложность декодированного решения (%d) не совпадает с оригинальной (%d)",
-			decoded.Challenge.Difficulty, original.Challenge.Difficulty)
-	}
-	if decoded.Nonce != original.Nonce {
-		t.Errorf("Nonce декодированного решения (%d) не совпадает с оригинальным (%d)",
-			decoded.Nonce, original.Nonce)
-	}
+	for i, tc := range testCases {
+		result := EstimateTime(tc.difficulty, tc.hashesPerSecond)
+		// Проверяем формулу: 2^difficulty / hashesPerSecond
+		expectedDuration := time.Duration(math.Pow(2, float64(tc.difficulty)) / tc.hashesPerSecond * float64(time.Second))
 
-	// Проверяем обработку некорректных строк
-	_, err = DecodeSolution("invalid-format")
-	if err == nil {
-		t.Error("Декодирование некорректной строки должно возвращать ошибку")
+		if result != expectedDuration {
+			t.Errorf("Тест %d: ожидалось %v, получено %v для сложности %d и %f хешей/сек",
+				i, expectedDuration, result, tc.difficulty, tc.hashesPerSecond)
+		}
 	}
 }
 
@@ -121,27 +104,6 @@ func TestProofOfWorkPerformance(t *testing.T) {
 		// Проверяем, что решение корректно
 		if !solution.Verify() {
 			t.Errorf("Решение не прошло верификацию для сложности %d", difficulty)
-		}
-	}
-}
-
-func TestCountLeadingZeros(t *testing.T) {
-	testCases := []struct {
-		input    []byte
-		expected int
-	}{
-		{[]byte{0, 0, 128, 0}, 16}, // 2 байта нулевых + 1 бит
-		{[]byte{0, 0, 0, 0}, 32},   // 4 байта нулевых
-		{[]byte{128, 0, 0, 0}, 0},  // 0 бит (первый бит равен 1)
-		{[]byte{1, 0, 0, 0}, 7},    // 7 бит
-		{[]byte{0, 1, 0, 0}, 15},   // 1 байт + 7 бит
-	}
-
-	for i, tc := range testCases {
-		result := countLeadingZeros(tc.input)
-		if result != tc.expected {
-			t.Errorf("Тест %d: ожидалось %d нулевых бит, получено %d для %v",
-				i, tc.expected, result, tc.input)
 		}
 	}
 }

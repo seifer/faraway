@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"faraway/quotes"
@@ -26,7 +27,7 @@ func DefaultConfig() Config {
 	return Config{
 		Host:         "0.0.0.0",
 		Port:         8080,
-		Difficulty:   20, // Это значение можно настраивать в зависимости от требуемого уровня защиты
+		Difficulty:   20,
 		ReadTimeout:  time.Second * 10,
 		WriteTimeout: time.Second * 10,
 	}
@@ -36,6 +37,8 @@ func DefaultConfig() Config {
 type Server struct {
 	config   Config
 	listener net.Listener
+	stopping bool
+	wg       sync.WaitGroup
 }
 
 // NewServer создает новый экземпляр сервера с указанной конфигурацией
@@ -57,36 +60,52 @@ func (s *Server) Start() error {
 	log.Printf("Сервер 'Word of Wisdom' запущен на %s", addr)
 	log.Printf("Сложность Proof of Work: %d", s.config.Difficulty)
 
+	s.wg.Add(1)
+	go s.acceptLoop()
+
+	return nil
+}
+
+// acceptLoop обрабатывает входящие соединения
+func (s *Server) acceptLoop() {
+	defer s.wg.Done()
+
 	for {
-		conn, err := listener.Accept()
+		// Периодически проверяем флаг остановки
+		s.listener.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second))
+
+		conn, err := s.listener.Accept()
 		if err != nil {
+			if s.stopping {
+				return
+			}
+
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+
 			log.Printf("Ошибка принятия соединения: %v", err)
 			continue
 		}
 
-		go s.handleConnection(conn)
+		s.wg.Add(1)
+		go func(c net.Conn) {
+			defer s.wg.Done()
+			s.handleConnection(c)
+		}(conn)
 	}
-}
-
-// Stop останавливает сервер
-func (s *Server) Stop() error {
-	if s.listener != nil {
-		return s.listener.Close()
-	}
-	return nil
 }
 
 // handleConnection обрабатывает входящее TCP соединение
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
+
 	addr := conn.RemoteAddr().String()
 	log.Printf("Новое соединение от %s", addr)
 
-	// Устанавливаем таймауты
-	conn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout))
+	// Шаг 1: Отправляем клиенту задачу Proof of Work
 	conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
 
-	// Шаг 1: Отправляем клиенту задачу Proof of Work
 	challenge := shared.GenerateChallenge(s.config.Difficulty)
 	challengeStr := challenge.Encode()
 	_, err := fmt.Fprintf(conn, "CHALLENGE %s\n", challengeStr)
@@ -96,9 +115,18 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 	log.Printf("Отправлена задача клиенту %s: %s", addr, challengeStr)
 
-	// Шаг 2: Ожидаем решение от клиента
+	// Рассчитываем таймаут чтения
+	estimatedClientHashRate := 1000000.0
+	powTimeout := shared.EstimateTime(s.config.Difficulty, estimatedClientHashRate)
+	readTimeout := powTimeout + s.config.ReadTimeout
+
+	// Устанавливаем таймаут чтения
+	conn.SetReadDeadline(time.Now().Add(readTimeout))
+
+	// Шаг 2: Получаем решение от клиента
 	reader := bufio.NewReader(conn)
 	line, err := reader.ReadString('\n')
+
 	if err != nil {
 		log.Printf("Ошибка чтения ответа от клиента %s: %v", addr, err)
 		return
@@ -139,4 +167,26 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 
 	log.Printf("Отправлена цитата клиенту %s", addr)
+}
+
+// Stop останавливает сервер и ждет завершения всех соединений
+func (s *Server) Stop() error {
+	log.Printf("Начинается остановка сервера...")
+
+	// Устанавливаем флаг остановки
+	s.stopping = true
+
+	// Закрываем слушатель
+	if s.listener != nil {
+		if err := s.listener.Close(); err != nil {
+			log.Printf("Ошибка при закрытии слушателя: %v", err)
+		}
+	}
+
+	// Ждем завершения всех соединений
+	log.Printf("Ожидание завершения всех соединений...")
+	s.wg.Wait()
+	log.Printf("Сервер успешно остановлен")
+
+	return nil
 }

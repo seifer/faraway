@@ -10,7 +10,7 @@ RUN go mod download
 COPY . .
 
 # Собираем приложение
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o client ./client/cmd
+RUN CGO_ENABLED=0 GOOS=linux go build -a -o client-app ./client/cmd
 
 # Конечный образ
 FROM alpine:latest
@@ -18,7 +18,7 @@ FROM alpine:latest
 WORKDIR /app
 
 # Копируем исполняемый файл из образа сборки
-COPY --from=builder /app/client .
+COPY --from=builder /app/client-app .
 
 # Настройки среды выполнения по умолчанию
 ENV SERVER_HOST=server
@@ -27,4 +27,4 @@ ENV CONNECT_TIMEOUT=5
 ENV RESPONSE_TIMEOUT=30
 
 # Запускаем клиент
-CMD ["./client"] 
+CMD ["./client-app"] 

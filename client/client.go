@@ -2,6 +2,7 @@ package client
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -41,28 +42,37 @@ func NewClient(config Config) *Client {
 }
 
 // GetQuote подключается к серверу, решает задачу PoW и получает цитату
-func (c *Client) GetQuote() (string, error) {
-	// Подключение к серверу
+func (c *Client) GetQuote(ctx context.Context) (string, error) {
+	// Создаем контекст с таймаутом для подключения
+	dialCtx, cancel := context.WithTimeout(ctx, c.config.ConnectTimeout)
+	defer cancel()
+
+	// Подключаемся к серверу
 	addr := fmt.Sprintf("%s:%d", c.config.ServerHost, c.config.ServerPort)
-	conn, err := net.DialTimeout("tcp", addr, c.config.ConnectTimeout)
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(dialCtx, "tcp", addr)
 	if err != nil {
 		return "", fmt.Errorf("ошибка подключения к серверу: %v", err)
 	}
 	defer conn.Close()
 
-	// Устанавливаем таймаут на чтение ответа
-	conn.SetReadDeadline(time.Now().Add(c.config.ResponseTimeout))
-
-	// Читаем задачу от сервера
+	// Шаг 1: Получаем задачу от сервера
+	conn.SetDeadline(time.Now().Add(c.config.ResponseTimeout))
 	reader := bufio.NewReader(conn)
+
 	challengeLine, err := reader.ReadString('\n')
 	if err != nil {
 		return "", fmt.Errorf("ошибка чтения задачи от сервера: %v", err)
 	}
 
+	// Проверка контекста
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("операция отменена: %v", ctx.Err())
+	}
+
 	challengeLine = strings.TrimSpace(challengeLine)
 	if !strings.HasPrefix(challengeLine, "CHALLENGE ") {
-		return "", fmt.Errorf("получен неверный формат задачи: %s", challengeLine)
+		return "", fmt.Errorf("неверный формат задачи: %s", challengeLine)
 	}
 
 	challengeStr := strings.TrimPrefix(challengeLine, "CHALLENGE ")
@@ -74,36 +84,53 @@ func (c *Client) GetQuote() (string, error) {
 	fmt.Printf("Получена задача от сервера: %s (сложность %d)\n", challenge.Prefix, challenge.Difficulty)
 	fmt.Printf("Решаем задачу Proof of Work (это может занять некоторое время)...\n")
 
-	// Засекаем время начала решения
+	// Шаг 2: Решаем задачу, периодически проверяя контекст
 	startTime := time.Now()
 
-	// Решаем задачу
+	// Проверяем, не отменён ли контекст перед вычислениями
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("операция отменена: %v", ctx.Err())
+	}
+
+	// Вычисляем решение напрямую - по-хорошему здесь нужна реализация с поддержкой отмены
+	// Но пока используем стандартный метод Solve
 	solution := challenge.Solve()
 
-	// Вычисляем затраченное время
+	// Проверяем контекст после решения
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("операция отменена: %v", ctx.Err())
+	}
+
 	elapsedTime := time.Since(startTime)
 	fmt.Printf("Задача решена за %v, найден nonce: %d\n", elapsedTime, solution.Nonce)
 
-	// Отправляем решение серверу
+	// Шаг 3: Отправляем решение серверу
 	solutionStr := solution.Encode()
+	conn.SetDeadline(time.Now().Add(c.config.ResponseTimeout))
 	_, err = fmt.Fprintf(conn, "SOLUTION %s\n", solutionStr)
 	if err != nil {
-		return "", fmt.Errorf("ошибка отправки решения серверу: %v", err)
+		return "", fmt.Errorf("ошибка отправки решения: %v", err)
 	}
 
-	// Читаем ответ сервера (цитату или ошибку)
+	// Шаг 4: Получаем ответ сервера
+	conn.SetDeadline(time.Now().Add(c.config.ResponseTimeout))
 	resultLine, err := reader.ReadString('\n')
 	if err != nil {
-		return "", fmt.Errorf("ошибка чтения ответа от сервера: %v", err)
+		return "", fmt.Errorf("ошибка чтения ответа: %v", err)
+	}
+
+	// Проверка контекста
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("операция отменена: %v", ctx.Err())
 	}
 
 	resultLine = strings.TrimSpace(resultLine)
 	if strings.HasPrefix(resultLine, "ERROR: ") {
-		return "", fmt.Errorf("сервер вернул ошибку: %s", strings.TrimPrefix(resultLine, "ERROR: "))
+		return "", fmt.Errorf("ошибка сервера: %s", strings.TrimPrefix(resultLine, "ERROR: "))
 	}
 
 	if !strings.HasPrefix(resultLine, "QUOTE ") {
-		return "", fmt.Errorf("получен неверный формат ответа: %s", resultLine)
+		return "", fmt.Errorf("неверный формат ответа: %s", resultLine)
 	}
 
 	quote := strings.TrimPrefix(resultLine, "QUOTE ")

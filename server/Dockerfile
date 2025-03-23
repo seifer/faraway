@@ -10,7 +10,7 @@ RUN go mod download
 COPY . .
 
 # Собираем приложение
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server ./server/cmd
+RUN CGO_ENABLED=0 GOOS=linux go build -a -o server-app ./server/cmd
 
 # Конечный образ
 FROM alpine:latest
@@ -21,12 +21,13 @@ WORKDIR /app
 RUN apk --no-cache add tzdata
 
 # Копируем исполняемый файл из образа сборки
-COPY --from=builder /app/server .
+COPY --from=builder /app/server-app .
 
 # Настройки среды выполнения
 ENV SERVER_HOST=0.0.0.0
 ENV SERVER_PORT=8080
-ENV POW_DIFFICULTY=20
+ENV POW_DIFFICULTY=10
+# READ_TIMEOUT используется как дополнительное время к расчетному таймауту PoW
 ENV READ_TIMEOUT=10
 ENV WRITE_TIMEOUT=10
 
@@ -34,4 +35,4 @@ ENV WRITE_TIMEOUT=10
 EXPOSE 8080
 
 # Запускаем сервер
-CMD ["./server"] 
+CMD ["./server-app"] 

@@ -1,8 +1,8 @@
 package main
 
 import (
+	"context"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -46,16 +46,20 @@ func main() {
 		config.ResponseTimeout = time.Duration(*responseTimeout) * time.Second
 	}
 
+	// Создаем корневой контекст с возможностью отмены
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// Создаем клиент
 	c := client.NewClient(config)
 
 	// Получаем цитату
-	fmt.Printf("Подключение к серверу %s:%d...\n", config.ServerHost, config.ServerPort)
+	log.Printf("Подключение к серверу %s:%d...\n", config.ServerHost, config.ServerPort)
 
-	quote, err := c.GetQuote()
+	quote, err := c.GetQuote(ctx)
 	if err != nil {
-		log.Fatalf("Ошибка: %v", err)
+		log.Printf("Ошибка: %v", err)
 	}
 
-	fmt.Printf("\nПолучена цитата мудрости:\n\n%s\n", quote)
+	log.Printf("\nПолучена цитата мудрости:\n\n%s\n", quote)
 }
