@@ -1,0 +1,4 @@
+# Логи
+logs/
+*.log 
+coverage.*
